@@ -410,6 +410,42 @@ resource "claude_agent" "multi" {
 	})
 }
 
+// TestAccImportEmptyMCPServersPlansClean is the v0.2.2 regression: an agent that
+// declares no MCP servers (config `mcp_servers = jsonencode([])`) whose API
+// response stores nothing (so Read yields null) must import to an empty plan —
+// no mcp_servers and no version diff from null-vs-[].
+func TestAccImportEmptyMCPServersPlansClean(t *testing.T) {
+	srv := mockServer(t) // returns mcp_servers: [] (empty) and version 1
+	cfg := providerConfig(srv.URL) + `
+resource "claude_agent" "test" {
+  name        = "Coding Assistant"
+  system      = "You are a helpful coding agent."
+  model       = { id = "claude-opus-4-8" }
+  tools       = jsonencode([{ type = "agent_toolset_20260401" }])
+  mcp_servers = jsonencode([])
+  skills      = jsonencode([])
+}
+`
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testProviderFactories(srv.URL),
+		Steps: []resource.TestStep{
+			{
+				Config:             cfg,
+				ResourceName:       "claude_agent.test",
+				ImportState:        true,
+				ImportStateId:      "agent_test",
+				ImportStatePersist: true,
+			},
+			{
+				Config: cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
+}
+
 func TestAccEnvironmentManagedNoop(t *testing.T) {
 	srv := mockServer(t)
 	cfg := providerConfig(srv.URL) + envCfgBody

@@ -203,7 +203,7 @@ func (r *agentResource) Create(ctx context.Context, req resource.CreateRequest, 
 	// them from the (enriched) response. The create-time semantic equality
 	// then keeps the planned subset value in state, so state stays == config.
 	plan.Tools = subsetSetFromRaw(agent.Tools)
-	plan.Skills = subsetFromRaw(agent.Skills)
+	plan.Skills = subsetFromRawArray(agent.Skills)
 	plan.MCPServers = subsetSetFromRaw(agent.MCPServers)
 	plan.Multiagent = subsetFromRaw(agent.Multiagent)
 	r.applyComputed(&plan, agent)
@@ -235,7 +235,7 @@ func (r *agentResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	state.System = stringFromPtr(agent.System)
 	state.Description = stringFromPtr(agent.Description)
 	state.Tools = subsetSetFromRaw(agent.Tools)
-	state.Skills = subsetFromRaw(agent.Skills)
+	state.Skills = subsetFromRawArray(agent.Skills)
 	state.MCPServers = subsetSetFromRaw(agent.MCPServers)
 	state.Multiagent = subsetFromRaw(agent.Multiagent)
 	r.applyModel(&state, agent)

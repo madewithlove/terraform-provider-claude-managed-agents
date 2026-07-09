@@ -60,13 +60,27 @@ func rawFromSubset(n jsontype.Subset) json.RawMessage {
 	return json.RawMessage(n.ValueString())
 }
 
-// subsetFromRaw wraps raw JSON in a jsontype.Subset. An empty, JSON-null, or
-// empty-container payload maps to null: the API returns `[]`/`{}` for optional
-// list/object fields the user never set, and treating those as null keeps an
-// unset configuration from perpetually diffing against a refreshed empty value.
+// subsetFromRaw wraps raw JSON in a jsontype.Subset for an object-shaped field
+// (e.g. multiagent). An empty, JSON-null, or empty payload maps to null: the
+// coordinator is simply absent, which config also expresses by omission, so
+// null-vs-null never diffs.
 func subsetFromRaw(raw json.RawMessage) jsontype.Subset {
 	if isEmptyJSON(raw) {
 		return jsontype.NewSubsetNull()
+	}
+	return jsontype.NewSubsetValue(string(raw))
+}
+
+// subsetFromRawArray wraps raw JSON in a jsontype.Subset for an array-shaped
+// field (e.g. skills). An empty/absent value canonicalizes to `[]` rather than
+// null so it matches a config that writes `jsonencode([])`; a config that omits
+// the field (null) is carried forward from this state by UseStateForUnknown, so
+// both spellings of "no entries" plan cleanly. Terraform forbids planning null
+// against a non-null config value, which is why we canonicalize to `[]` rather
+// than null here.
+func subsetFromRawArray(raw json.RawMessage) jsontype.Subset {
+	if isEmptyJSON(raw) {
+		return jsontype.NewSubsetValue("[]")
 	}
 	return jsontype.NewSubsetValue(string(raw))
 }
@@ -80,10 +94,11 @@ func rawFromSubsetSet(n jsontype.SubsetSet) json.RawMessage {
 	return json.RawMessage(n.ValueString())
 }
 
-// subsetSetFromRaw is subsetFromRaw for the order-insensitive SubsetSet type.
+// subsetSetFromRaw is subsetFromRawArray for the order-insensitive SubsetSet
+// type (tools, mcp_servers): empty/absent canonicalizes to `[]`.
 func subsetSetFromRaw(raw json.RawMessage) jsontype.SubsetSet {
 	if isEmptyJSON(raw) {
-		return jsontype.NewSubsetSetNull()
+		return jsontype.NewSubsetSetValue("[]")
 	}
 	return jsontype.NewSubsetSetValue(string(raw))
 }

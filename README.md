@@ -151,6 +151,8 @@ The agent JSON fields use an **enrichment-tolerant custom type** ([`internal/jso
 
 `tools` and `mcp_servers` additionally use the **order-insensitive** variant (`jsontype.SubsetSet`): the API returns their entries in an arbitrary order, so the top-level array is compared as an unordered multiset (bijection matching, keyed on `mcp_server_name`/`type`). This is what makes **multi-MCP agents** import cleanly. A genuine add/remove/rename of a tool or server still shows a diff. `skills` and `multiagent` keep order-preserving subset semantics — their element order is not known to be immaterial, so it is left significant rather than changed silently; `initial_events` (deployments) stays order-preserving because event sequence is meaningful.
 
+For the array-shaped fields (`tools`, `mcp_servers`, `skills`), an **empty collection is canonicalized to `[]` on read**, so a config that writes `jsonencode([])` and one that omits the field entirely both plan cleanly — no spurious `null` ↔ `[]` diff and no `version` churn. (Canonicalizing to a non-null `[]`, rather than to null, is required: Terraform rejects a planned `null` against a non-null config value.)
+
 The deployment fields `initial_events`, `files`, `github`, `memory_stores`, and `vaults` are **not returned by the API**, so they cannot be refreshed; on import they are adopted from config (an in-place update, never a destroy/recreate), and a change forces replacement.
 
 ### Clean imports
