@@ -1,0 +1,18 @@
+# Compiled provider binary
+terraform-provider-claude-managed-agents
+dist/
+
+# Go
+*.test
+*.out
+vendor/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+dev.tfrc
+*.tfvars
