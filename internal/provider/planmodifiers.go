@@ -23,7 +23,12 @@ import (
 // Semantic equality on the custom type keeps managed state stable across
 // refreshes, but semantic equality does not run during plan — so this plan-time
 // modifier is required for the imported (prior != config-shaped) case.
-type subsetSuppressModifier struct{}
+//
+// When unordered is true, the top-level JSON array is compared as an unordered
+// multiset (for fields like tools/mcp_servers where the API reorders entries).
+type subsetSuppressModifier struct {
+	unordered bool
+}
 
 func (m subsetSuppressModifier) Description(_ context.Context) string {
 	return "Suppresses diffs when the config JSON is a subset of the enriched server JSON."
@@ -40,7 +45,11 @@ func (m subsetSuppressModifier) PlanModifyString(_ context.Context, req planmodi
 	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() || req.PlanValue.IsUnknown() {
 		return
 	}
-	ok, err := jsontype.IsSubset([]byte(req.ConfigValue.ValueString()), []byte(req.StateValue.ValueString()))
+	compare := jsontype.IsSubset
+	if m.unordered {
+		compare = jsontype.IsSubsetUnordered
+	}
+	ok, err := compare([]byte(req.ConfigValue.ValueString()), []byte(req.StateValue.ValueString()))
 	if err != nil {
 		return // invalid JSON: let the normal diff surface it.
 	}
@@ -52,6 +61,13 @@ func (m subsetSuppressModifier) PlanModifyString(_ context.Context, req planmodi
 // suppressJSONSubset keeps the (enriched) prior state value when config is a
 // subset of it, so imported JSON attributes plan cleanly.
 func suppressJSONSubset() planmodifier.String { return subsetSuppressModifier{} }
+
+// suppressJSONSubsetUnordered is like suppressJSONSubset but treats the
+// top-level array as an unordered multiset, so a reordered (and enriched)
+// server value plans cleanly.
+func suppressJSONSubsetUnordered() planmodifier.String {
+	return subsetSuppressModifier{unordered: true}
+}
 
 // ---- requires-replace-if-known-and-changed ----
 

@@ -65,11 +65,35 @@ func rawFromSubset(n jsontype.Subset) json.RawMessage {
 // list/object fields the user never set, and treating those as null keeps an
 // unset configuration from perpetually diffing against a refreshed empty value.
 func subsetFromRaw(raw json.RawMessage) jsontype.Subset {
-	switch strings.TrimSpace(string(raw)) {
-	case "", "null", "[]", "{}":
+	if isEmptyJSON(raw) {
 		return jsontype.NewSubsetNull()
 	}
 	return jsontype.NewSubsetValue(string(raw))
+}
+
+// rawFromSubsetSet converts a jsontype.SubsetSet to json.RawMessage, returning
+// nil when the value is null or unknown.
+func rawFromSubsetSet(n jsontype.SubsetSet) json.RawMessage {
+	if n.IsNull() || n.IsUnknown() {
+		return nil
+	}
+	return json.RawMessage(n.ValueString())
+}
+
+// subsetSetFromRaw is subsetFromRaw for the order-insensitive SubsetSet type.
+func subsetSetFromRaw(raw json.RawMessage) jsontype.SubsetSet {
+	if isEmptyJSON(raw) {
+		return jsontype.NewSubsetSetNull()
+	}
+	return jsontype.NewSubsetSetValue(string(raw))
+}
+
+func isEmptyJSON(raw json.RawMessage) bool {
+	switch strings.TrimSpace(string(raw)) {
+	case "", "null", "[]", "{}":
+		return true
+	}
+	return false
 }
 
 // listToStrings converts a framework List of strings to a Go slice, returning

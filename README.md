@@ -147,7 +147,11 @@ These follow directly from the shape of the API. Read them before relying on the
 
 `tools`, `mcp_servers`, `skills`, and `multiagent` (on agents) and `initial_events`, `files`, `github`, `memory_stores`, `vaults` (on deployments) are large, evolving beta union types. Rather than model every variant, they are accepted as JSON strings — use `jsonencode(...)`.
 
-The agent JSON fields use an **enrichment-tolerant custom type** ([`internal/jsontype`](internal/jsontype)): the API enriches these on read (e.g. adding a tool's `default_config`), so a config value that is a recursive *subset* of the enriched server value is treated as unchanged. They are refreshed on read, so genuine out-of-band changes surface as drift, while enrichment never churns — and an imported agent plans cleanly. The deployment fields `initial_events`, `files`, `github`, `memory_stores`, and `vaults` are **not returned by the API**, so they cannot be refreshed; on import they are adopted from config (an in-place update, never a destroy/recreate), and a change forces replacement.
+The agent JSON fields use an **enrichment-tolerant custom type** ([`internal/jsontype`](internal/jsontype)): the API enriches these on read (e.g. adding a tool's `default_config`), so a config value that is a recursive *subset* of the enriched server value is treated as unchanged. They are refreshed on read, so genuine out-of-band changes surface as drift, while enrichment never churns — and an imported agent plans cleanly.
+
+`tools` and `mcp_servers` additionally use the **order-insensitive** variant (`jsontype.SubsetSet`): the API returns their entries in an arbitrary order, so the top-level array is compared as an unordered multiset (bijection matching, keyed on `mcp_server_name`/`type`). This is what makes **multi-MCP agents** import cleanly. A genuine add/remove/rename of a tool or server still shows a diff. `skills` and `multiagent` keep order-preserving subset semantics — their element order is not known to be immaterial, so it is left significant rather than changed silently; `initial_events` (deployments) stays order-preserving because event sequence is meaningful.
+
+The deployment fields `initial_events`, `files`, `github`, `memory_stores`, and `vaults` are **not returned by the API**, so they cannot be refreshed; on import they are adopted from config (an in-place update, never a destroy/recreate), and a change forces replacement.
 
 ### Clean imports
 

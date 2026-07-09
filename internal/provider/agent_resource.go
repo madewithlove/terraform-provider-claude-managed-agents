@@ -36,21 +36,21 @@ type agentModelBlock struct {
 }
 
 type agentResourceModel struct {
-	ID          types.String     `tfsdk:"id"`
-	Type        types.String     `tfsdk:"type"`
-	Name        types.String     `tfsdk:"name"`
-	Model       *agentModelBlock `tfsdk:"model"`
-	System      types.String     `tfsdk:"system"`
-	Description types.String     `tfsdk:"description"`
-	Tools       jsontype.Subset  `tfsdk:"tools"`
-	Skills      jsontype.Subset  `tfsdk:"skills"`
-	MCPServers  jsontype.Subset  `tfsdk:"mcp_servers"`
-	Multiagent  jsontype.Subset  `tfsdk:"multiagent"`
-	Metadata    types.Map        `tfsdk:"metadata"`
-	Version     types.Int64      `tfsdk:"version"`
-	CreatedAt   types.String     `tfsdk:"created_at"`
-	UpdatedAt   types.String     `tfsdk:"updated_at"`
-	ArchivedAt  types.String     `tfsdk:"archived_at"`
+	ID          types.String       `tfsdk:"id"`
+	Type        types.String       `tfsdk:"type"`
+	Name        types.String       `tfsdk:"name"`
+	Model       *agentModelBlock   `tfsdk:"model"`
+	System      types.String       `tfsdk:"system"`
+	Description types.String       `tfsdk:"description"`
+	Tools       jsontype.SubsetSet `tfsdk:"tools"`
+	Skills      jsontype.Subset    `tfsdk:"skills"`
+	MCPServers  jsontype.SubsetSet `tfsdk:"mcp_servers"`
+	Multiagent  jsontype.Subset    `tfsdk:"multiagent"`
+	Metadata    types.Map          `tfsdk:"metadata"`
+	Version     types.Int64        `tfsdk:"version"`
+	CreatedAt   types.String       `tfsdk:"created_at"`
+	UpdatedAt   types.String       `tfsdk:"updated_at"`
+	ArchivedAt  types.String       `tfsdk:"archived_at"`
 }
 
 func (r *agentResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -101,19 +101,19 @@ func (r *agentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				MarkdownDescription: "Description of what the agent does.",
 			},
 			"tools": schema.StringAttribute{
-				CustomType:    jsontype.SubsetType{},
+				CustomType:    jsontype.SubsetSetType{},
 				Optional:      true,
 				Computed:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), suppressJSONSubset()},
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), suppressJSONSubsetUnordered()},
 				MarkdownDescription: "Tools available to the agent, as a JSON array. Combines pre-built agent tools, MCP tools, and custom tools. " +
-					"Refreshed on read. The API enriches each entry with defaults (e.g. `default_config`); a config value that is a recursive subset of the enriched server value is treated as unchanged, so this plans cleanly on import and never churns.",
+					"Refreshed on read. The array is treated as an unordered set: the API returns entries in an arbitrary order and enriches each with defaults (e.g. `default_config`), and a config value whose entries are a recursive subset of the (reordered) server entries is treated as unchanged, so this plans cleanly on import — including multi-MCP agents — and never churns.",
 			},
 			"mcp_servers": schema.StringAttribute{
-				CustomType:          jsontype.SubsetType{},
+				CustomType:          jsontype.SubsetSetType{},
 				Optional:            true,
 				Computed:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown(), suppressJSONSubset()},
-				MarkdownDescription: "MCP servers, as a JSON array. Refreshed on read; server-enriched fields are tolerated (subset semantics).",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown(), suppressJSONSubsetUnordered()},
+				MarkdownDescription: "MCP servers, as a JSON array. Treated as an unordered set: refreshed on read, with server ordering and enrichment tolerated, so multi-server agents plan cleanly on import.",
 			},
 			"skills": schema.StringAttribute{
 				CustomType:          jsontype.SubsetType{},
@@ -186,9 +186,9 @@ func (r *agentResource) Create(ctx context.Context, req resource.CreateRequest, 
 		Model:       modelConfigFromBlock(plan.Model),
 		System:      stringPtr(plan.System),
 		Description: stringPtr(plan.Description),
-		Tools:       rawFromSubset(plan.Tools),
+		Tools:       rawFromSubsetSet(plan.Tools),
 		Skills:      rawFromSubset(plan.Skills),
-		MCPServers:  rawFromSubset(plan.MCPServers),
+		MCPServers:  rawFromSubsetSet(plan.MCPServers),
 		Multiagent:  rawFromSubset(plan.Multiagent),
 		Metadata:    metadata,
 	}
@@ -202,9 +202,9 @@ func (r *agentResource) Create(ctx context.Context, req resource.CreateRequest, 
 	// tools/skills/mcp_servers/multiagent are Optional+Computed, so populate
 	// them from the (enriched) response. The create-time semantic equality
 	// then keeps the planned subset value in state, so state stays == config.
-	plan.Tools = subsetFromRaw(agent.Tools)
+	plan.Tools = subsetSetFromRaw(agent.Tools)
 	plan.Skills = subsetFromRaw(agent.Skills)
-	plan.MCPServers = subsetFromRaw(agent.MCPServers)
+	plan.MCPServers = subsetSetFromRaw(agent.MCPServers)
 	plan.Multiagent = subsetFromRaw(agent.Multiagent)
 	r.applyComputed(&plan, agent)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -234,9 +234,9 @@ func (r *agentResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	state.Name = types.StringValue(agent.Name)
 	state.System = stringFromPtr(agent.System)
 	state.Description = stringFromPtr(agent.Description)
-	state.Tools = subsetFromRaw(agent.Tools)
+	state.Tools = subsetSetFromRaw(agent.Tools)
 	state.Skills = subsetFromRaw(agent.Skills)
-	state.MCPServers = subsetFromRaw(agent.MCPServers)
+	state.MCPServers = subsetSetFromRaw(agent.MCPServers)
 	state.Multiagent = subsetFromRaw(agent.Multiagent)
 	r.applyModel(&state, agent)
 	r.applyMetadata(ctx, &state, agent, &resp.Diagnostics)
@@ -270,9 +270,9 @@ func (r *agentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		Model:       modelConfigFromBlock(plan.Model),
 		System:      stringPtr(plan.System),
 		Description: stringPtr(plan.Description),
-		Tools:       rawFromSubset(config.Tools),
+		Tools:       rawFromSubsetSet(config.Tools),
 		Skills:      rawFromSubset(config.Skills),
-		MCPServers:  rawFromSubset(config.MCPServers),
+		MCPServers:  rawFromSubsetSet(config.MCPServers),
 		Multiagent:  rawFromSubset(config.Multiagent),
 		Metadata:    metadata,
 	}

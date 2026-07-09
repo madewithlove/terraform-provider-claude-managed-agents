@@ -324,6 +324,92 @@ func TestAccImportAgentPlansClean(t *testing.T) {
 	})
 }
 
+// multiMCPServer mocks an agent with two MCP servers whose tools and
+// mcp_servers arrays are returned REORDERED (relative to config order) and
+// ENRICHED with server-added keys — the exact shape that caused a spurious
+// diff before order-insensitive equality.
+func multiMCPServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	toolsEnriched := json.RawMessage(`[
+      {"type":"agent_toolset_20260401","default_config":{"enabled":true},"configs":[]},
+      {"type":"mcp_toolset","mcp_server_name":"gcal-calendarmcp","default_config":{"enabled":true},"configs":[]},
+      {"type":"mcp_toolset","mcp_server_name":"Team","default_config":{"enabled":true},"configs":[]}
+    ]`)
+	mcpEnriched := json.RawMessage(`[
+      {"mcp_server_name":"gcal-calendarmcp","url":"https://gcal.example/mcp","configs":[]},
+      {"mcp_server_name":"Team","url":"https://team.example/mcp","configs":[]}
+    ]`)
+	body := func() map[string]any {
+		return map[string]any{
+			"id":          "agent_multi",
+			"type":        "agent",
+			"name":        "Multi",
+			"model":       map[string]any{"id": "claude-opus-4-8", "speed": "standard"},
+			"system":      nil,
+			"description": nil,
+			"tools":       toolsEnriched,
+			"mcp_servers": mcpEnriched,
+			"skills":      []any{},
+			"multiagent":  nil,
+			"metadata":    map[string]any{},
+			"version":     1,
+			"created_at":  "2026-04-03T18:24:10.412Z",
+			"updated_at":  "2026-04-03T18:24:10.412Z",
+			"archived_at": nil,
+		}
+	}
+	mux := http.NewServeMux()
+	h := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(body())
+	}
+	mux.HandleFunc("/v1/agents", h)
+	mux.HandleFunc("/v1/agents/agent_multi", h)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestAccImportMultiMCPAgentPlansClean is the v0.2.1 regression: an agent with
+// two MCP servers whose tools/mcp_servers come back reordered and enriched must
+// import to an empty plan (no tools/mcp_servers/version diff).
+func TestAccImportMultiMCPAgentPlansClean(t *testing.T) {
+	srv := multiMCPServer(t)
+	cfg := providerConfig(srv.URL) + `
+resource "claude_agent" "multi" {
+  name  = "Multi"
+  model = { id = "claude-opus-4-8" }
+  tools = jsonencode([
+    { type = "agent_toolset_20260401" },
+    { type = "mcp_toolset", mcp_server_name = "Team" },
+    { type = "mcp_toolset", mcp_server_name = "gcal-calendarmcp" },
+  ])
+  mcp_servers = jsonencode([
+    { mcp_server_name = "Team", url = "https://team.example/mcp" },
+    { mcp_server_name = "gcal-calendarmcp", url = "https://gcal.example/mcp" },
+  ])
+}
+`
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testProviderFactories(srv.URL),
+		Steps: []resource.TestStep{
+			{
+				Config:             cfg,
+				ResourceName:       "claude_agent.multi",
+				ImportState:        true,
+				ImportStateId:      "agent_multi",
+				ImportStatePersist: true,
+			},
+			{
+				Config: cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
+}
+
 func TestAccEnvironmentManagedNoop(t *testing.T) {
 	srv := mockServer(t)
 	cfg := providerConfig(srv.URL) + envCfgBody
