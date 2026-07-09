@@ -8,7 +8,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -87,9 +86,10 @@ func (r *environmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"config": schema.SingleNestedAttribute{
-				Required:            true,
-				MarkdownDescription: "Sandbox configuration. Changing any part forces replacement.",
-				PlanModifiers:       []planmodifier.Object{objectplanmodifier.RequiresReplace()},
+				Required: true,
+				MarkdownDescription: "Sandbox configuration. Refreshed on read; the API may enrich it with defaults, " +
+					"so a config that is a recursive subset of the server value is treated as unchanged. A genuine change forces replacement.",
+				PlanModifiers: []planmodifier.Object{envConfigSubsetOrReplace()},
 				Attributes: map[string]schema.Attribute{
 					"type": schema.StringAttribute{
 						Required:            true,
@@ -128,9 +128,21 @@ func (r *environmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 					},
 				},
 			},
-			"created_at":  schema.StringAttribute{Computed: true, MarkdownDescription: "Creation timestamp (RFC 3339)."},
-			"updated_at":  schema.StringAttribute{Computed: true, MarkdownDescription: "Last-update timestamp (RFC 3339)."},
-			"archived_at": schema.StringAttribute{Computed: true, MarkdownDescription: "Archive timestamp (RFC 3339), or null if active."},
+			"created_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Creation timestamp (RFC 3339).",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"updated_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Last-update timestamp (RFC 3339).",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"archived_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Archive timestamp (RFC 3339), or null if active.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
 		},
 	}
 }
@@ -190,8 +202,14 @@ func (r *environmentResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 
-	// config is intentionally not refreshed (immutable + server enrichment).
+	// Refresh config too. The API may enrich it; the config plan modifier
+	// tolerates enrichment (subset) and forces replacement on a genuine change,
+	// so refreshing keeps imported environments planning cleanly without a
+	// spurious destroy/recreate.
 	state.Name = types.StringValue(env.Name)
+	cfg, diags := envConfigFromAPI(ctx, env.Config)
+	resp.Diagnostics.Append(diags...)
+	state.Config = cfg
 	applyEnvComputed(&state, env)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

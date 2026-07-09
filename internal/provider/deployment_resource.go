@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -62,12 +63,17 @@ func (r *deploymentResource) Metadata(_ context.Context, req resource.MetadataRe
 
 func (r *deploymentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	replaceStr := []planmodifier.String{stringplanmodifier.RequiresReplace()}
+	// replaceIfChanged forces replacement only when the prior state is known and
+	// changes. On import the prior is null (these fields cannot be refreshed
+	// from the API), so the config value is adopted rather than triggering a
+	// destroy/recreate.
+	replaceIfChanged := []planmodifier.String{requiresReplaceIfKnownChanged()}
 	replaceJSON := func(desc string) schema.StringAttribute {
 		return schema.StringAttribute{
 			CustomType:          jsontypes.NormalizedType{},
 			Optional:            true,
 			MarkdownDescription: desc,
-			PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			PlanModifiers:       replaceIfChanged,
 		}
 	}
 	resp.Schema = schema.Schema{
@@ -90,19 +96,19 @@ func (r *deploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			},
 			"agent_id": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "ID of the agent to run. Not refreshed on read.",
-				PlanModifiers:       replaceStr,
+				MarkdownDescription: "ID of the agent to run. Refreshed on read (from the returned agent object); a change forces replacement.",
+				PlanModifiers:       replaceIfChanged,
 			},
 			"environment_id": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "ID of the environment to run in. Not refreshed on read.",
-				PlanModifiers:       replaceStr,
+				MarkdownDescription: "ID of the environment to run in. Refreshed on read; a change forces replacement.",
+				PlanModifiers:       replaceIfChanged,
 			},
 			"initial_events": schema.StringAttribute{
 				CustomType:          jsontypes.NormalizedType{},
 				Required:            true,
-				MarkdownDescription: "JSON array of events that start each run. Must include an initial `user.message`. Not refreshed on read.",
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				MarkdownDescription: "JSON array of events that start each run. Must include an initial `user.message`. Not returned by the API, so it is adopted from config on import and a change forces replacement.",
+				PlanModifiers:       replaceIfChanged,
 			},
 			"schedule": schema.SingleNestedAttribute{
 				Required:            true,
@@ -112,7 +118,10 @@ func (r *deploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 						Optional:            true,
 						Computed:            true,
 						MarkdownDescription: "Schedule type. Defaults to `cron`.",
-						PlanModifiers:       replaceStr,
+						PlanModifiers: []planmodifier.String{
+							stringplanmodifier.UseStateForUnknown(),
+							stringplanmodifier.RequiresReplace(),
+						},
 					},
 					"expression": schema.StringAttribute{
 						Required:            true,
@@ -135,14 +144,15 @@ func (r *deploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 					},
 				},
 			},
-			"files":         replaceJSON("Optional JSON files configuration. Not refreshed on read."),
-			"github":        replaceJSON("Optional JSON GitHub configuration. Not refreshed on read."),
-			"memory_stores": replaceJSON("Optional JSON memory-stores configuration. Not refreshed on read."),
-			"vaults":        replaceJSON("Optional JSON vaults configuration. Not refreshed on read."),
+			"files":         replaceJSON("Optional JSON files configuration. Not returned by the API; adopted from config on import, and a change forces replacement."),
+			"github":        replaceJSON("Optional JSON GitHub configuration. Not returned by the API; adopted from config on import, and a change forces replacement."),
+			"memory_stores": replaceJSON("Optional JSON memory-stores configuration. Not returned by the API; adopted from config on import, and a change forces replacement."),
+			"vaults":        replaceJSON("Optional JSON vaults configuration. Not returned by the API; adopted from config on import, and a change forces replacement."),
 			"paused": schema.BoolAttribute{
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Whether scheduled triggers are suppressed. Toggling this pauses/unpauses in place (no replacement). The API may auto-pause on errors.",
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 			"status": schema.StringAttribute{
 				Computed:            true,
@@ -303,6 +313,16 @@ func (r *deploymentResource) applyComputed(ctx context.Context, m *deploymentRes
 	m.Paused = types.BoolValue(statusToPaused(d.Status))
 	m.CreatedAt = types.StringValue(d.CreatedAt)
 
+	// Refresh agent_id/environment_id when the API returns them (GET does; the
+	// create echo may not). Guarded so we never clobber the configured value
+	// with an empty string.
+	if aid := agentIDFromRaw(d.Agent); aid != "" {
+		m.AgentID = types.StringValue(aid)
+	}
+	if d.EnvironmentID != "" {
+		m.EnvironmentID = types.StringValue(d.EnvironmentID)
+	}
+
 	if d.PausedReason == nil {
 		m.PausedReason = jsontypes.NewNormalizedNull()
 	} else {
@@ -334,3 +354,23 @@ func scheduleType(b *deploymentScheduleBlock) string {
 }
 
 func statusToPaused(status string) bool { return status == "paused" }
+
+// agentIDFromRaw extracts the agent id from the deployment's `agent` field,
+// which the API returns as an object ({"type":"agent","id":"...","version":N})
+// but also accepts as a bare string.
+func agentIDFromRaw(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var obj struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil && obj.ID != "" {
+		return obj.ID
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return ""
+}

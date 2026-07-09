@@ -3,11 +3,14 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"github.com/madewithlove/terraform-provider-claude-managed-agents/internal/jsontype"
 )
 
 // pathRoot is a small alias to keep provider.go readable.
@@ -46,6 +49,27 @@ func normalizedFromRaw(raw json.RawMessage) jsontypes.Normalized {
 		return jsontypes.NewNormalizedNull()
 	}
 	return jsontypes.NewNormalizedValue(string(raw))
+}
+
+// rawFromSubset converts a jsontype.Subset to json.RawMessage, returning nil
+// when the value is null or unknown.
+func rawFromSubset(n jsontype.Subset) json.RawMessage {
+	if n.IsNull() || n.IsUnknown() {
+		return nil
+	}
+	return json.RawMessage(n.ValueString())
+}
+
+// subsetFromRaw wraps raw JSON in a jsontype.Subset. An empty, JSON-null, or
+// empty-container payload maps to null: the API returns `[]`/`{}` for optional
+// list/object fields the user never set, and treating those as null keeps an
+// unset configuration from perpetually diffing against a refreshed empty value.
+func subsetFromRaw(raw json.RawMessage) jsontype.Subset {
+	switch strings.TrimSpace(string(raw)) {
+	case "", "null", "[]", "{}":
+		return jsontype.NewSubsetNull()
+	}
+	return jsontype.NewSubsetValue(string(raw))
 }
 
 // listToStrings converts a framework List of strings to a Go slice, returning

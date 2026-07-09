@@ -45,19 +45,19 @@ output "next_runs" {
 
 ### Required
 
-- `agent_id` (String) ID of the agent to run. Not refreshed on read.
-- `environment_id` (String) ID of the environment to run in. Not refreshed on read.
-- `initial_events` (String) JSON array of events that start each run. Must include an initial `user.message`. Not refreshed on read.
+- `agent_id` (String) ID of the agent to run. Refreshed on read (from the returned agent object); a change forces replacement.
+- `environment_id` (String) ID of the environment to run in. Refreshed on read; a change forces replacement.
+- `initial_events` (String) JSON array of events that start each run. Must include an initial `user.message`. Not returned by the API, so it is adopted from config on import and a change forces replacement.
 - `name` (String) Human-readable deployment name.
 - `schedule` (Attributes) The recurring cron schedule. (see [below for nested schema](#nestedatt--schedule))
 
 ### Optional
 
-- `files` (String) Optional JSON files configuration. Not refreshed on read.
-- `github` (String) Optional JSON GitHub configuration. Not refreshed on read.
-- `memory_stores` (String) Optional JSON memory-stores configuration. Not refreshed on read.
+- `files` (String) Optional JSON files configuration. Not returned by the API; adopted from config on import, and a change forces replacement.
+- `github` (String) Optional JSON GitHub configuration. Not returned by the API; adopted from config on import, and a change forces replacement.
+- `memory_stores` (String) Optional JSON memory-stores configuration. Not returned by the API; adopted from config on import, and a change forces replacement.
 - `paused` (Boolean) Whether scheduled triggers are suppressed. Toggling this pauses/unpauses in place (no replacement). The API may auto-pause on errors.
-- `vaults` (String) Optional JSON vaults configuration. Not refreshed on read.
+- `vaults` (String) Optional JSON vaults configuration. Not returned by the API; adopted from config on import, and a change forces replacement.
 
 ### Read-Only
 

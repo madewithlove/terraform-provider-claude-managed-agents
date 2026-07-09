@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -14,12 +13,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/madewithlove/terraform-provider-claude-managed-agents/internal/client"
+	"github.com/madewithlove/terraform-provider-claude-managed-agents/internal/jsontype"
 )
 
 var (
 	_ resource.Resource                = (*agentResource)(nil)
 	_ resource.ResourceWithConfigure   = (*agentResource)(nil)
 	_ resource.ResourceWithImportState = (*agentResource)(nil)
+	_ resource.ResourceWithModifyPlan  = (*agentResource)(nil)
 )
 
 type agentResource struct {
@@ -35,21 +36,21 @@ type agentModelBlock struct {
 }
 
 type agentResourceModel struct {
-	ID          types.String         `tfsdk:"id"`
-	Type        types.String         `tfsdk:"type"`
-	Name        types.String         `tfsdk:"name"`
-	Model       *agentModelBlock     `tfsdk:"model"`
-	System      types.String         `tfsdk:"system"`
-	Description types.String         `tfsdk:"description"`
-	Tools       jsontypes.Normalized `tfsdk:"tools"`
-	Skills      jsontypes.Normalized `tfsdk:"skills"`
-	MCPServers  jsontypes.Normalized `tfsdk:"mcp_servers"`
-	Multiagent  jsontypes.Normalized `tfsdk:"multiagent"`
-	Metadata    types.Map            `tfsdk:"metadata"`
-	Version     types.Int64          `tfsdk:"version"`
-	CreatedAt   types.String         `tfsdk:"created_at"`
-	UpdatedAt   types.String         `tfsdk:"updated_at"`
-	ArchivedAt  types.String         `tfsdk:"archived_at"`
+	ID          types.String     `tfsdk:"id"`
+	Type        types.String     `tfsdk:"type"`
+	Name        types.String     `tfsdk:"name"`
+	Model       *agentModelBlock `tfsdk:"model"`
+	System      types.String     `tfsdk:"system"`
+	Description types.String     `tfsdk:"description"`
+	Tools       jsontype.Subset  `tfsdk:"tools"`
+	Skills      jsontype.Subset  `tfsdk:"skills"`
+	MCPServers  jsontype.Subset  `tfsdk:"mcp_servers"`
+	Multiagent  jsontype.Subset  `tfsdk:"multiagent"`
+	Metadata    types.Map        `tfsdk:"metadata"`
+	Version     types.Int64      `tfsdk:"version"`
+	CreatedAt   types.String     `tfsdk:"created_at"`
+	UpdatedAt   types.String     `tfsdk:"updated_at"`
+	ArchivedAt  types.String     `tfsdk:"archived_at"`
 }
 
 func (r *agentResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -87,6 +88,7 @@ func (r *agentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 						Optional:            true,
 						Computed:            true,
 						MarkdownDescription: "Inference speed: `standard` (default) or `fast`. Fast mode requires a supported Opus model.",
+						PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 					},
 				},
 			},
@@ -99,25 +101,33 @@ func (r *agentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				MarkdownDescription: "Description of what the agent does.",
 			},
 			"tools": schema.StringAttribute{
-				CustomType: jsontypes.NormalizedType{},
-				Optional:   true,
+				CustomType:    jsontype.SubsetType{},
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), suppressJSONSubset()},
 				MarkdownDescription: "Tools available to the agent, as a JSON array. Combines pre-built agent tools, MCP tools, and custom tools. " +
-					"Not refreshed on read (the API enriches entries with defaults), so out-of-band changes here are not detected.",
+					"Refreshed on read. The API enriches each entry with defaults (e.g. `default_config`); a config value that is a recursive subset of the enriched server value is treated as unchanged, so this plans cleanly on import and never churns.",
 			},
 			"mcp_servers": schema.StringAttribute{
-				CustomType:          jsontypes.NormalizedType{},
+				CustomType:          jsontype.SubsetType{},
 				Optional:            true,
-				MarkdownDescription: "MCP servers, as a JSON array. Not refreshed on read.",
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown(), suppressJSONSubset()},
+				MarkdownDescription: "MCP servers, as a JSON array. Refreshed on read; server-enriched fields are tolerated (subset semantics).",
 			},
 			"skills": schema.StringAttribute{
-				CustomType:          jsontypes.NormalizedType{},
+				CustomType:          jsontype.SubsetType{},
 				Optional:            true,
-				MarkdownDescription: "Skills, as a JSON array. Not refreshed on read.",
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown(), suppressJSONSubset()},
+				MarkdownDescription: "Skills, as a JSON array. Refreshed on read; server-enriched fields are tolerated (subset semantics).",
 			},
 			"multiagent": schema.StringAttribute{
-				CustomType:          jsontypes.NormalizedType{},
+				CustomType:          jsontype.SubsetType{},
 				Optional:            true,
-				MarkdownDescription: "Coordinator declaration listing agents this agent can delegate to, as a JSON object. Not refreshed on read.",
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown(), suppressJSONSubset()},
+				MarkdownDescription: "Coordinator declaration listing agents this agent can delegate to, as a JSON object. Refreshed on read; server-enriched fields are tolerated (subset semantics).",
 			},
 			"metadata": schema.MapAttribute{
 				ElementType:         types.StringType,
@@ -140,6 +150,7 @@ func (r *agentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"archived_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Archive timestamp (RFC 3339), or null if active.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 		},
 	}
@@ -175,10 +186,10 @@ func (r *agentResource) Create(ctx context.Context, req resource.CreateRequest, 
 		Model:       modelConfigFromBlock(plan.Model),
 		System:      stringPtr(plan.System),
 		Description: stringPtr(plan.Description),
-		Tools:       rawFromNormalized(plan.Tools),
-		Skills:      rawFromNormalized(plan.Skills),
-		MCPServers:  rawFromNormalized(plan.MCPServers),
-		Multiagent:  rawFromNormalized(plan.Multiagent),
+		Tools:       rawFromSubset(plan.Tools),
+		Skills:      rawFromSubset(plan.Skills),
+		MCPServers:  rawFromSubset(plan.MCPServers),
+		Multiagent:  rawFromSubset(plan.Multiagent),
 		Metadata:    metadata,
 	}
 
@@ -188,6 +199,13 @@ func (r *agentResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
+	// tools/skills/mcp_servers/multiagent are Optional+Computed, so populate
+	// them from the (enriched) response. The create-time semantic equality
+	// then keeps the planned subset value in state, so state stays == config.
+	plan.Tools = subsetFromRaw(agent.Tools)
+	plan.Skills = subsetFromRaw(agent.Skills)
+	plan.MCPServers = subsetFromRaw(agent.MCPServers)
+	plan.Multiagent = subsetFromRaw(agent.Multiagent)
 	r.applyComputed(&plan, agent)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -209,11 +227,17 @@ func (r *agentResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	// Refresh the drift-detectable fields. tools/skills/mcp_servers/multiagent
-	// are intentionally left as-is (see schema notes).
+	// Refresh all drift-detectable fields, including the JSON fields. The API
+	// enriches tools/skills/mcp_servers/multiagent on the way back; the Subset
+	// custom type's semantic equality keeps a managed subset value stable, and
+	// the subset plan modifier keeps imported (enriched) values planning clean.
 	state.Name = types.StringValue(agent.Name)
 	state.System = stringFromPtr(agent.System)
 	state.Description = stringFromPtr(agent.Description)
+	state.Tools = subsetFromRaw(agent.Tools)
+	state.Skills = subsetFromRaw(agent.Skills)
+	state.MCPServers = subsetFromRaw(agent.MCPServers)
+	state.Multiagent = subsetFromRaw(agent.Multiagent)
 	r.applyModel(&state, agent)
 	r.applyMetadata(ctx, &state, agent, &resp.Diagnostics)
 	r.applyComputed(&state, agent)
@@ -222,9 +246,13 @@ func (r *agentResource) Read(ctx context.Context, req resource.ReadRequest, resp
 }
 
 func (r *agentResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state agentResourceModel
+	var plan, state, config agentResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	// The subset plan modifier may rewrite the planned JSON fields to the
+	// enriched prior-state value to suppress the diff. Source the request
+	// payload from config so we always send exactly what the user declared.
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -242,10 +270,10 @@ func (r *agentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		Model:       modelConfigFromBlock(plan.Model),
 		System:      stringPtr(plan.System),
 		Description: stringPtr(plan.Description),
-		Tools:       rawFromNormalized(plan.Tools),
-		Skills:      rawFromNormalized(plan.Skills),
-		MCPServers:  rawFromNormalized(plan.MCPServers),
-		Multiagent:  rawFromNormalized(plan.Multiagent),
+		Tools:       rawFromSubset(config.Tools),
+		Skills:      rawFromSubset(config.Skills),
+		MCPServers:  rawFromSubset(config.MCPServers),
+		Multiagent:  rawFromSubset(config.Multiagent),
 		Metadata:    metadata,
 	}
 
@@ -288,6 +316,62 @@ func (r *agentResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 func (r *agentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// ModifyPlan prevents a phantom in-place update on refresh/import. After the
+// attribute plan modifiers run (subset suppression on the JSON fields), the
+// only remaining "changes" can be the server-computed churn fields `version`
+// and `updated_at`, which the framework marks unknown as soon as the resource
+// is flagged for update. When every configurable and refreshable attribute
+// already matches state, we pin those two to their prior values so the plan is
+// a true no-op. A genuine change leaves them unknown so the real update (and
+// version bump) proceeds correctly.
+func (r *agentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return // create or destroy
+	}
+
+	var plan, state agentResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Tentatively pin the server-computed churn fields to prior state.
+	plan.Version = state.Version
+	plan.UpdatedAt = state.UpdatedAt
+
+	// If the plan now matches state in every field, it is a no-op; commit the
+	// pinned values so the plan is empty. Otherwise leave the plan untouched
+	// (the framework's unknown version/updated_at drive the real update).
+	if agentModelsEqual(plan, state) {
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+	}
+}
+
+// agentModelsEqual reports whether two agent models are equal across every
+// attribute. The JSON fields compare byte-equal here because the subset plan
+// modifier has already aligned the plan value to the prior state value when
+// the config was a subset.
+func agentModelsEqual(a, b agentResourceModel) bool {
+	if !a.ID.Equal(b.ID) || !a.Type.Equal(b.Type) || !a.Name.Equal(b.Name) ||
+		!a.System.Equal(b.System) || !a.Description.Equal(b.Description) ||
+		!a.Tools.Equal(b.Tools) || !a.Skills.Equal(b.Skills) ||
+		!a.MCPServers.Equal(b.MCPServers) || !a.Multiagent.Equal(b.Multiagent) ||
+		!a.Metadata.Equal(b.Metadata) || !a.Version.Equal(b.Version) ||
+		!a.CreatedAt.Equal(b.CreatedAt) || !a.UpdatedAt.Equal(b.UpdatedAt) ||
+		!a.ArchivedAt.Equal(b.ArchivedAt) {
+		return false
+	}
+	switch {
+	case a.Model == nil && b.Model == nil:
+		return true
+	case a.Model == nil || b.Model == nil:
+		return false
+	default:
+		return a.Model.ID.Equal(b.Model.ID) && a.Model.Speed.Equal(b.Model.Speed)
+	}
 }
 
 // applyComputed sets the server-owned computed fields.

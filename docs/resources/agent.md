@@ -53,12 +53,12 @@ output "agent_version" {
 ### Optional
 
 - `description` (String) Description of what the agent does.
-- `mcp_servers` (String) MCP servers, as a JSON array. Not refreshed on read.
+- `mcp_servers` (String) MCP servers, as a JSON array. Refreshed on read; server-enriched fields are tolerated (subset semantics).
 - `metadata` (Map of String) Arbitrary key-value pairs for your own tracking.
-- `multiagent` (String) Coordinator declaration listing agents this agent can delegate to, as a JSON object. Not refreshed on read.
-- `skills` (String) Skills, as a JSON array. Not refreshed on read.
+- `multiagent` (String) Coordinator declaration listing agents this agent can delegate to, as a JSON object. Refreshed on read; server-enriched fields are tolerated (subset semantics).
+- `skills` (String) Skills, as a JSON array. Refreshed on read; server-enriched fields are tolerated (subset semantics).
 - `system` (String) System prompt defining the agent's behavior and persona.
-- `tools` (String) Tools available to the agent, as a JSON array. Combines pre-built agent tools, MCP tools, and custom tools. Not refreshed on read (the API enriches entries with defaults), so out-of-band changes here are not detected.
+- `tools` (String) Tools available to the agent, as a JSON array. Combines pre-built agent tools, MCP tools, and custom tools. Refreshed on read. The API enriches each entry with defaults (e.g. `default_config`); a config value that is a recursive subset of the enriched server value is treated as unchanged, so this plans cleanly on import and never churns.
 
 ### Read-Only
 

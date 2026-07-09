@@ -51,7 +51,7 @@ resource "claude_environment" "sandbox" {
 
 ### Required
 
-- `config` (Attributes) Sandbox configuration. Changing any part forces replacement. (see [below for nested schema](#nestedatt--config))
+- `config` (Attributes) Sandbox configuration. Refreshed on read; the API may enrich it with defaults, so a config that is a recursive subset of the server value is treated as unchanged. A genuine change forces replacement. (see [below for nested schema](#nestedatt--config))
 - `name` (String) Unique, descriptive environment name.
 
 ### Read-Only

@@ -145,17 +145,21 @@ These follow directly from the shape of the API. Read them before relying on the
 
 ### Complex union fields are JSON
 
-`tools`, `mcp_servers`, `skills`, and `multiagent` (on agents) and `initial_events`, `files`, `github`, `memory_stores`, `vaults` (on deployments) are large, evolving beta union types. Rather than model every variant, they are accepted as JSON strings — use `jsonencode(...)`. Whitespace and key order are normalized, so formatting differences don't cause spurious diffs.
+`tools`, `mcp_servers`, `skills`, and `multiagent` (on agents) and `initial_events`, `files`, `github`, `memory_stores`, `vaults` (on deployments) are large, evolving beta union types. Rather than model every variant, they are accepted as JSON strings — use `jsonencode(...)`.
 
-Because the API enriches some of these on read (e.g. adding a tool's `default_config`), the provider **does not refresh them from the API**. Out-of-band changes to those fields are therefore not detected as drift. The values you write are the source of truth.
+The agent JSON fields use an **enrichment-tolerant custom type** ([`internal/jsontype`](internal/jsontype)): the API enriches these on read (e.g. adding a tool's `default_config`), so a config value that is a recursive *subset* of the enriched server value is treated as unchanged. They are refreshed on read, so genuine out-of-band changes surface as drift, while enrichment never churns — and an imported agent plans cleanly. The deployment fields `initial_events`, `files`, `github`, `memory_stores`, and `vaults` are **not returned by the API**, so they cannot be refreshed; on import they are adopted from config (an in-place update, never a destroy/recreate), and a change forces replacement.
+
+### Clean imports
+
+Every resource can be `terraform import`-ed and produces a clean subsequent plan: agent and environment plan **empty**, and deployment shows at most an **in-place adoption** of the API-unreturnable fields — never a destroy/recreate. This is enforced by an acceptance test suite ([`internal/provider/import_acc_test.go`](internal/provider/import_acc_test.go)) that drives the real Terraform binary against an in-process mock. Run it with `TF_ACC=1 go test ./internal/provider -run TestAcc`.
 
 ### Environments are immutable
 
-The API has no environment update endpoint, so **any** change to `name` or `config` forces replacement. `config` is not refreshed on read (to avoid churn from server-populated defaults). On `terraform destroy` the provider deletes the environment; if a session still references it (delete returns 409), it falls back to **archiving** it and warns.
+The API has no environment update endpoint, so **any** change to `name` or `config` forces replacement. `config` is refreshed on read; the API may enrich it with defaults, so a config that is a recursive subset of the server value is treated as unchanged (no spurious replace), while a genuine change forces replacement. On `terraform destroy` the provider deletes the environment; if a session still references it (delete returns 409), it falls back to **archiving** it and warns.
 
 ### Deployments are immutable except `paused`
 
-Every deployment field forces replacement **except** `paused`, which pauses/unpauses in place via the dedicated endpoints. The API may auto-pause a deployment on errors; a subsequent `terraform plan` will reconcile `paused` back to your configured value. `terraform destroy` archives the deployment (terminal).
+Every deployment field forces replacement **except** `paused`, which pauses/unpauses in place via the dedicated endpoints. `agent_id` and `environment_id` are refreshed on read (the id is parsed out of the returned agent object). The API may auto-pause a deployment on errors; a subsequent `terraform plan` will reconcile `paused` back to your configured value. `terraform destroy` archives the deployment (terminal).
 
 ### Vault credential secrets are write-only
 
