@@ -39,6 +39,11 @@ type Deployment struct {
 // DeploymentCreateRequest is the POST /v1/deployments body. Agent accepts a
 // string ID or an object; we send a string. The optional passthrough fields
 // carry raw JSON so beta-only shapes work without a code change.
+//
+// MemoryStores is sent under the API's unified "resources" array (each element
+// carries its own "type", e.g. "memory_store"); Vaults is sent as "vault_ids",
+// a plain array of vault id strings. The Terraform schema attribute names stay
+// "memory_stores"/"vaults" for config compatibility.
 type DeploymentCreateRequest struct {
 	Name          string          `json:"name"`
 	Agent         string          `json:"agent"`
@@ -47,8 +52,8 @@ type DeploymentCreateRequest struct {
 	Schedule      Schedule        `json:"schedule"`
 	Files         json.RawMessage `json:"files,omitempty"`
 	GitHub        json.RawMessage `json:"github,omitempty"`
-	MemoryStores  json.RawMessage `json:"memory_stores,omitempty"`
-	Vaults        json.RawMessage `json:"vaults,omitempty"`
+	MemoryStores  json.RawMessage `json:"resources,omitempty"`
+	Vaults        json.RawMessage `json:"vault_ids,omitempty"`
 }
 
 // CreateDeployment creates a scheduled deployment.
