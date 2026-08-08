@@ -121,6 +121,7 @@ func (p *claudeProvider) Resources(_ context.Context) []func() resource.Resource
 		NewVaultCredentialResource,
 		NewMemoryStoreResource,
 		NewMemoryResource,
+		NewSkillResource,
 	}
 }
 

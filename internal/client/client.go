@@ -21,6 +21,8 @@ const (
 	DefaultAnthropicVersion = "2023-06-01"
 	// BetaHeader gates the Managed Agents endpoints. Required on every request.
 	BetaHeader = "managed-agents-2026-04-01"
+	// SkillsBetaHeader gates the Skills API endpoints (/v1/skills).
+	SkillsBetaHeader = "skills-2025-10-02"
 )
 
 // Client talks to the Claude Managed Agents API.
@@ -129,29 +131,37 @@ type errorEnvelope struct {
 	} `json:"error"`
 }
 
-// do issues a request. If body is non-nil it is JSON-encoded. If out is
-// non-nil a 2xx response body is decoded into it. A 204 leaves out untouched.
+// do issues a JSON request against the Managed Agents beta. If body is non-nil
+// it is JSON-encoded. If out is non-nil a 2xx response body is decoded into it.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	var reader io.Reader
+	contentType := ""
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("encoding request body: %w", err)
 		}
 		reader = bytes.NewReader(b)
+		contentType = "application/json"
 	}
+	return c.doRaw(ctx, method, path, BetaHeader, contentType, reader, out)
+}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+// doRaw issues a request with an explicit beta header and content type (for
+// endpoints outside the Managed Agents beta, e.g. multipart Skills uploads).
+// If out is non-nil a 2xx body is decoded into it; a 204 leaves out untouched.
+func (c *Client) doRaw(ctx context.Context, method, path, betaHeader, contentType string, body io.Reader, out any) error {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return fmt.Errorf("building request: %w", err)
 	}
 
 	req.Header.Set("x-api-key", c.apiKey)
 	req.Header.Set("anthropic-version", c.anthropicVersion)
-	req.Header.Set("anthropic-beta", BetaHeader)
+	req.Header.Set("anthropic-beta", betaHeader)
 	req.Header.Set("user-agent", c.userAgent)
-	if body != nil {
-		req.Header.Set("content-type", "application/json")
+	if contentType != "" {
+		req.Header.Set("content-type", contentType)
 	}
 
 	resp, err := c.httpClient.Do(req)
