@@ -40,10 +40,10 @@ type Deployment struct {
 // string ID or an object; we send a string. The optional passthrough fields
 // carry raw JSON so beta-only shapes work without a code change.
 //
-// MemoryStores is sent under the API's unified "resources" array (each element
-// carries its own "type", e.g. "memory_store"); Vaults is sent as "vault_ids",
-// a plain array of vault id strings. The Terraform schema attribute names stay
-// "memory_stores"/"vaults" for config compatibility.
+// Resources is the API's unified "resources" array — each element carries its
+// own "type" (e.g. "memory_store", "github_repository", "file"). The Terraform
+// schema builds it by merging the "memory_stores" and "github_repositories"
+// attributes. Vaults is sent as "vault_ids", a plain array of vault id strings.
 type DeploymentCreateRequest struct {
 	Name          string          `json:"name"`
 	Agent         string          `json:"agent"`
@@ -52,7 +52,7 @@ type DeploymentCreateRequest struct {
 	Schedule      Schedule        `json:"schedule"`
 	Files         json.RawMessage `json:"files,omitempty"`
 	GitHub        json.RawMessage `json:"github,omitempty"`
-	MemoryStores  json.RawMessage `json:"resources,omitempty"`
+	Resources     json.RawMessage `json:"resources,omitempty"`
 	Vaults        json.RawMessage `json:"vault_ids,omitempty"`
 }
 

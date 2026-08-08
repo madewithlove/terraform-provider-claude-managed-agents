@@ -40,21 +40,22 @@ type deploymentScheduleBlock struct {
 }
 
 type deploymentResourceModel struct {
-	ID            types.String             `tfsdk:"id"`
-	Type          types.String             `tfsdk:"type"`
-	Name          types.String             `tfsdk:"name"`
-	AgentID       types.String             `tfsdk:"agent_id"`
-	EnvironmentID types.String             `tfsdk:"environment_id"`
-	InitialEvents jsontypes.Normalized     `tfsdk:"initial_events"`
-	Schedule      *deploymentScheduleBlock `tfsdk:"schedule"`
-	Files         jsontypes.Normalized     `tfsdk:"files"`
-	GitHub        jsontypes.Normalized     `tfsdk:"github"`
-	MemoryStores  jsontypes.Normalized     `tfsdk:"memory_stores"`
-	Vaults        jsontypes.Normalized     `tfsdk:"vaults"`
-	Paused        types.Bool               `tfsdk:"paused"`
-	Status        types.String             `tfsdk:"status"`
-	PausedReason  jsontypes.Normalized     `tfsdk:"paused_reason"`
-	CreatedAt     types.String             `tfsdk:"created_at"`
+	ID                 types.String             `tfsdk:"id"`
+	Type               types.String             `tfsdk:"type"`
+	Name               types.String             `tfsdk:"name"`
+	AgentID            types.String             `tfsdk:"agent_id"`
+	EnvironmentID      types.String             `tfsdk:"environment_id"`
+	InitialEvents      jsontypes.Normalized     `tfsdk:"initial_events"`
+	Schedule           *deploymentScheduleBlock `tfsdk:"schedule"`
+	Files              jsontypes.Normalized     `tfsdk:"files"`
+	GitHub             jsontypes.Normalized     `tfsdk:"github"`
+	MemoryStores       jsontypes.Normalized     `tfsdk:"memory_stores"`
+	GitHubRepositories jsontypes.Normalized     `tfsdk:"github_repositories"`
+	Vaults             jsontypes.Normalized     `tfsdk:"vaults"`
+	Paused             types.Bool               `tfsdk:"paused"`
+	Status             types.String             `tfsdk:"status"`
+	PausedReason       jsontypes.Normalized     `tfsdk:"paused_reason"`
+	CreatedAt          types.String             `tfsdk:"created_at"`
 }
 
 func (r *deploymentResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -147,7 +148,17 @@ func (r *deploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"files":         replaceJSON("Optional JSON files configuration. Not returned by the API; adopted from config on import, and a change forces replacement."),
 			"github":        replaceJSON("Optional JSON GitHub configuration. Not returned by the API; adopted from config on import, and a change forces replacement."),
 			"memory_stores": replaceJSON("Optional JSON memory-stores configuration. Not returned by the API; adopted from config on import, and a change forces replacement."),
-			"vaults":        replaceJSON("Optional JSON vaults configuration. Not returned by the API; adopted from config on import, and a change forces replacement."),
+			"github_repositories": schema.StringAttribute{
+				CustomType: jsontypes.NormalizedType{},
+				Optional:   true,
+				Sensitive:  true,
+				MarkdownDescription: "Optional JSON array of `github_repository` resource objects mounted on each run " +
+					"(each `{type = \"github_repository\", url, authorization_token, mount_path?, checkout?}`), merged into " +
+					"the session `resources` array alongside `memory_stores`. Carries a token, so it is sensitive, not " +
+					"returned by the API, adopted from config on import, and a change forces replacement.",
+				PlanModifiers: replaceIfChanged,
+			},
+			"vaults": replaceJSON("Optional JSON vaults configuration. Not returned by the API; adopted from config on import, and a change forces replacement."),
 			"paused": schema.BoolAttribute{
 				Optional:            true,
 				Computed:            true,
@@ -196,6 +207,12 @@ func (r *deploymentResource) Create(ctx context.Context, req resource.CreateRequ
 		Timezone:   plan.Schedule.Timezone.ValueString(),
 	}
 
+	resources, mergeErr := mergeResourceArrays(rawFromNormalized(plan.MemoryStores), rawFromNormalized(plan.GitHubRepositories))
+	if mergeErr != nil {
+		resp.Diagnostics.AddError("Invalid resources configuration", mergeErr.Error())
+		return
+	}
+
 	dep, err := r.client.CreateDeployment(ctx, client.DeploymentCreateRequest{
 		Name:          plan.Name.ValueString(),
 		Agent:         plan.AgentID.ValueString(),
@@ -204,7 +221,7 @@ func (r *deploymentResource) Create(ctx context.Context, req resource.CreateRequ
 		Schedule:      sched,
 		Files:         rawFromNormalized(plan.Files),
 		GitHub:        rawFromNormalized(plan.GitHub),
-		MemoryStores:  rawFromNormalized(plan.MemoryStores),
+		Resources:     resources,
 		Vaults:        rawFromNormalized(plan.Vaults),
 	})
 	if err != nil {
@@ -373,4 +390,26 @@ func agentIDFromRaw(raw json.RawMessage) string {
 		return s
 	}
 	return ""
+}
+
+// mergeResourceArrays concatenates JSON arrays of resource objects into the
+// single "resources" array the API expects (memory stores, github repos, ...).
+// Empty or unset inputs are skipped; if nothing remains it returns nil so the
+// field is omitted.
+func mergeResourceArrays(parts ...json.RawMessage) (json.RawMessage, error) {
+	merged := make([]json.RawMessage, 0)
+	for _, p := range parts {
+		if len(p) == 0 {
+			continue
+		}
+		var arr []json.RawMessage
+		if err := json.Unmarshal(p, &arr); err != nil {
+			return nil, fmt.Errorf("expected a JSON array of resource objects: %w", err)
+		}
+		merged = append(merged, arr...)
+	}
+	if len(merged) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(merged)
 }
