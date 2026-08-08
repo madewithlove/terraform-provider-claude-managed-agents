@@ -206,6 +206,11 @@ func zipSkillDir(dir string) ([]byte, error) {
 		return nil, fmt.Errorf("%s must contain a SKILL.md: %w", dir, err)
 	}
 
+	// The Skills API requires a single top-level folder containing SKILL.md
+	// (e.g. "writing-style/SKILL.md"), not SKILL.md at the zip root. Nest every
+	// entry under a folder named after the source directory.
+	root := filepath.Base(dir)
+
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	walkErr := filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
@@ -219,7 +224,7 @@ func zipSkillDir(dir string) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		w, err := zw.Create(filepath.ToSlash(rel))
+		w, err := zw.Create(filepath.ToSlash(filepath.Join(root, rel)))
 		if err != nil {
 			return err
 		}
